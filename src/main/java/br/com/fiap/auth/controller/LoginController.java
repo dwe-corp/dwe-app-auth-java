@@ -1,5 +1,7 @@
 package br.com.fiap.auth.controller;
 
+import br.com.fiap.auth.model.Auth;
+import br.com.fiap.auth.repository.AuthRepository;
 import br.com.fiap.auth.dto.AuthRequest;
 import br.com.fiap.auth.dto.AuthResponse;
 import br.com.fiap.auth.util.JwtUtil;
@@ -22,14 +24,22 @@ public class LoginController {
     @Autowired
     private UserDetailsService userDetailsService;
 
+    @Autowired
+    private AuthRepository authRepository;
+
     @PostMapping
     public AuthResponse login(@RequestBody AuthRequest request) {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getEmail(), request.getSenha())
         );
-
+    
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
         String token = jwtUtil.generateToken(userDetails);
-        return new AuthResponse(token);
+    
+        Auth usuario = authRepository.findByEmail(request.getEmail())
+            .orElseThrow(() -> new RuntimeException("Usuário não encontrado após autenticação"));
+    
+        return new AuthResponse(token, usuario.getPerfil().toString());
     }
+    
 }
