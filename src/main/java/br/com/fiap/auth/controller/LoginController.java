@@ -39,7 +39,7 @@ public class LoginController {
         Auth usuario = authRepository.findByEmail(request.getEmail())
             .orElseThrow(() -> new RuntimeException("Usuário não encontrado após autenticação"));
     
-        return new AuthResponse(token, usuario.getPerfil().toString());
+        return new AuthResponse(token, usuario.getNome(), usuario.getEmail(), usuario.getPerfil().toString());
     }
     
 }
