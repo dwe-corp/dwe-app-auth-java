@@ -1,4 +1,4 @@
-name: DAST - ZAP (simple)
+name: DAST - ZAP (minimal, no-action)
 
 on:
   workflow_dispatch:
@@ -10,24 +10,36 @@ on:
 jobs:
   zap:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set TARGET (fallback safe)
+      - name: Set TARGET (with fallback)
         run: |
           if [ -z "${{ secrets.STAGING_URL }}" ]; then
             echo "TARGET=https://example.com" >> $GITHUB_ENV
-            echo "No STAGING_URL secret set; using https://example.com"
+            echo "No STAGING_URL set; using https://example.com"
           else
             echo "TARGET=${{ secrets.STAGING_URL }}" >> $GITHUB_ENV
             echo "Using STAGING_URL=${{ secrets.STAGING_URL }}"
           fi
 
-      - name: ZAP Full Scan
-        uses: zaproxy/action-full-scan@v0.8.0
+      - name: Run ZAP Full Scan (Docker)
+        run: |
+          mkdir -p zap-out
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          # monta a pasta atual em /zap/wrk para salvar o relatório aqui
+          docker run --rm -v "$PWD":/zap/wrk ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+              -t "${TARGET}" \
+              -r zap-report.html \
+              -d -I || true
+          # deixa tudo em zap-out/
+          mv -f zap-report.html zap-out/ 2>/dev/null || true
+          ls -lah zap-out || true
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
         with:
-          target: ${{ env.TARGET }}
-          fail_action: false
-          allow_issue_writing: false
-          cmd_options: -d
-          artifact_name: zap
+          name: reports
+          path: zap-out
