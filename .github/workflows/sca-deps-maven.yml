@@ -23,14 +23,15 @@ jobs:
           java-version: '17'
           cache: maven
 
+      # SCA com OWASP Dependency-Check (Maven plugin)
       - name: Run OWASP Dependency-Check (Maven plugin)
         run: |
           mvn -B org.owasp:dependency-check-maven:check \
             -Dformat=HTML,JSON \
             -DoutputDirectory=target/dependency-check-report \
             -DfailOnCVSS=0
-          continue-on-error: true
 
+      # Entregável: baixe estes arquivos no artefato
       - name: Upload Dependency-Check reports
         uses: actions/upload-artifact@v4
         with:
