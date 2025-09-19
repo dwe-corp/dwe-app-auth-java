@@ -1,4 +1,4 @@
-name: Semgrep Code Scan
+name: SAST - Semgrep Code Scan
 
 on:
   push:
@@ -6,15 +6,42 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: read
+  security-events: write   # necessário p/ subir SARIF na aba Code scanning
+  actions: read
+
 jobs:
   semgrep:
     runs-on: ubuntu-latest
     name: Run Semgrep scan
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # Rodar Semgrep com regras focadas em segurança (SQLi, XSS, auth, secrets etc.)
       - name: Run Semgrep
         uses: returntocorp/semgrep-action@v1
         with:
-          config: auto
+          config: |
+            p/owasp-top-ten
+            p/security-audit
+            p/secrets
+          generateSarif: true
+          sarifFile: semgrep.sarif
+          # Opcional: falhar o job se achar achados de alta severidade
+          # auditOn: push
+          # severity: ERROR
+
+      # Publica o relatório na aba Security > Code scanning, com severidade e recomendações
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+
+      # (Opcional) Também salva o relatório como artefato do pipeline
+      - name: Upload Semgrep report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep.sarif
