@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   sca_maven:
@@ -24,28 +23,18 @@ jobs:
           java-version: '17'
           cache: maven
 
-      # Executa o OWASP Dependency-Check via plugin Maven (simples e estável)
       - name: Run OWASP Dependency-Check (Maven plugin)
         run: |
           mvn -B org.owasp:dependency-check-maven:check \
-            -Dformat=ALL \
+            -Dformat=HTML,JSON \
             -DoutputDirectory=target/dependency-check-report \
             -DfailOnCVSS=0
-        # se quiser que o job nunca falhe por CVE, descomente a próxima linha:
-        # continue-on-error: true
+          continue-on-error: true
 
-      # Publica o SARIF na aba Security > Code scanning (opcional, mas legal pra mostrar)
-      - name: Upload SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: target/dependency-check-report/dependency-check-report.sarif
-
-      # Anexa HTML/JSON para você baixar e entregar no trabalho
-      - name: Upload Dependency-Check artifacts
+      - name: Upload Dependency-Check reports
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
           path: |
             target/dependency-check-report/dependency-check-report.html
             target/dependency-check-report/dependency-check-report.json
-            target/dependency-check-report/dependency-check-report.sarif
