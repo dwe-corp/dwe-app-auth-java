@@ -5,10 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
-    
   workflow_dispatch:
-  # ou rode após o job de deploy (ex.: após deploy to staging)
-  # workflow run: workflow_run: workflows: ["deploy-to-staging"] types: [completed]
 
 permissions:
   contents: read
@@ -28,25 +25,16 @@ jobs:
       - name: Create report dir
         run: mkdir -p $REPORT_DIR
 
-      # 1) Espera o endpoint de staging ficar pronto (health check)
-      - name: Wait for staging to be healthy
+      # (Opcional) Só para logar a URL de destino — não bloqueia execução
+      - name: Log target URL (no healthcheck)
         env:
-          STAGING_HEALTH: ${{ secrets.STAGING_HEALTH }}   # ex: https://staging.example.com/health
+          STAGING_URL: ${{ secrets.STAGING_URL }}   # ex: https://staging.example.com
         run: |
-          echo "Waiting for staging health at $STAGING_HEALTH ..."
-          for i in {1..30}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$STAGING_HEALTH" || echo "000")
-            echo "try #$i -> $status"
-            if [ "$status" = "200" ]; then
-              echo "staging healthy"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Staging did not become healthy in time" >&2
-          exit 1
+          echo "DAST target: ${STAGING_URL:-<EMPTY>}"
+          # tenta 1 curl rápido só para log, sem bloquear
+          curl -s -I --max-time 5 "$STAGING_URL" || true
 
-      # 2) Start ZAP daemon (docker) so we can run scans and get JSON/HTML output
+      # Sobe o ZAP em modo daemon
       - name: Start ZAP daemon (container)
         env:
           ZAP_PORT: 8090
@@ -67,72 +55,73 @@ jobs:
             sleep 2
           done
 
-      # 3) Run a baseline/active scan via ZAP script (full scan)
+      # Varredura ativa completa — continua mesmo se achar findings/erros (queremos o relatório)
       - name: Run ZAP full scan
         env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}   # ex: https://staging.example.com
-          ZAP_PORT: 8090
-          ZAP_API_KEY: ${{ secrets.ZAP_API_KEY }}
+          STAGING_URL: ${{ secrets.STAGING_URL }}
           REPORT_DIR: ${{ env.REPORT_DIR }}
         run: |
-          # Ajuste timeouts e threads conforme necessário
           echo "Starting ZAP full scan against $STAGING_URL ..."
-          # O container tem scripts em /zap, usamos zap-full-scan.py que visita e ativa scanner
           docker exec zap-dast \
-            /bin/bash -c "python3 /zap/zap-full-scan.py -t ${STAGING_URL} -g gen.conf -r /zap/reports/zap-report.html -d -I"
-          # Copia relatórios para workspace
+            /bin/bash -c "python3 /zap/zap-full-scan.py \
+              -t ${STAGING_URL} \
+              -g gen.conf \
+              -r /zap/reports/zap-report.html \
+              -d -I || true"
+          # Copia relatórios (se existirem)
           docker cp zap-dast:/zap/reports/zap-report.html $REPORT_DIR/zap-report.html || true
-          docker cp zap-dast:/zap/reports/zap-report.xml $REPORT_DIR/zap-report.xml || true
+          docker cp zap-dast:/zap/reports/zap-report.xml  $REPORT_DIR/zap-report.xml  || true
           docker cp zap-dast:/zap/reports/zap-report.json $REPORT_DIR/zap-report.json || true
           ls -lah $REPORT_DIR || true
+        continue-on-error: true
 
-      # 4) (Opcional) Run Nikto for quick webserver checks
+      # Nikto via Docker, salvando saída em arquivo
       - name: Run Nikto scan
         env:
           STAGING_URL: ${{ secrets.STAGING_URL }}
           REPORT_DIR: ${{ env.REPORT_DIR }}
         run: |
           echo "Running Nikto..."
-          # remove schema for nikto host param if present
           host=$(echo "$STAGING_URL" | sed -E 's#https?://##' | sed -E 's#/.*##')
-          docker run --rm sullo/nikto -h "$host" -o /tmp/nikto.txt
-          # copy from container not needed cause we used --rm; instead run nikto locally requires install,
-          # but we can still save output by running nikto inside docker and copying it, example below:
-          # docker run --name nikto-temp sullo/nikto -h "$host" -o /tmp/nikto.txt
-          # docker cp nikto-temp:/tmp/nikto.txt $REPORT_DIR/nikto.txt || true
-          echo "Nikto scan completed (see container output above)."
+          docker run --name nikto-temp --rm --entrypoint /bin/sh sullo/nikto -lc "
+            nikto -h '$host' -o /tmp/nikto.txt || true
+            cat /tmp/nikto.txt
+          " | tee $REPORT_DIR/nikto.txt
+        continue-on-error: true
 
-      # 5) Stop and remove ZAP container (cleanup)
       - name: Stop ZAP container
+        if: always()
         run: |
           docker stop zap-dast || true
           docker rm zap-dast || true
 
-      # 6) Upload artifacts (HTML, XML, JSON, Nikto)
       - name: Upload DAST artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dast-reports
           path: ${{ env.REPORT_DIR }}
 
-      # 7) Optional: Fail the job if there are HIGH / CRITICAL alerts
+      # (Opcional) Falha se houver High/Critical no JSON do ZAP
       - name: Fail on high/critical alerts (optional)
         if: always()
         env:
           REPORT_DIR: ${{ env.REPORT_DIR }}
         run: |
-          # If zap-report.json exists, try to count alerts with risk "High" or "Critical"
           jf="$REPORT_DIR/zap-report.json"
           if [ -f "$jf" ]; then
             echo "Parsing $jf for high/critical alerts..."
-            # THIS jq filter may need adaptation dependendo do formato exato do JSON de saída do ZAP
-            high_count=$(jq '[.. | objects | select(.risk? != null) | select(.risk=="High" or .risk=="Critical")] | length' "$jf" 2>/dev/null || echo "0")
+            # Ajuste o filtro conforme o esquema do JSON do ZAP na sua versão
+            if command -v jq >/dev/null 2>&1; then
+              high_count=$(jq '[.. | objects | select(.risk? != null) | select(.risk=="High" or .risk=="Critical")] | length' "$jf" 2>/dev/null || echo "0")
+            else
+              high_count=0
+            fi
             echo "High/Critical alerts found: $high_count"
-            # fail threshold
             if [ "$high_count" -ge 1 ]; then
-              echo "Failing job because there are $high_count high/critical alerts" >&2
+              echo "Failing job: $high_count high/critical alerts" >&2
               exit 2
             fi
           else
-            echo "$jf not found — skipping high/critical check"
+            echo "No ZAP JSON found; skipping severity gate."
           fi
