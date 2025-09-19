@@ -1,6 +1,11 @@
 name: DAST - OWASP ZAP + Nikto (staging)
 
 on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+    
   workflow_dispatch:
   # ou rode após o job de deploy (ex.: após deploy to staging)
   # workflow run: workflow_run: workflows: ["deploy-to-staging"] types: [completed]
