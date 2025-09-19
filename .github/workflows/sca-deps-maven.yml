@@ -1,0 +1,105 @@
+name: SCA - Third-Party Components (Maven)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+  security-events: write   # para subir SARIF em Code scanning
+  actions: read
+
+jobs:
+  sca_maven:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # Resolve dependências (gera target/.m2 cache e garante árvore resolvida)
+      - name: Build (resolve deps)
+        run: mvn -B -q -DskipTests dependency:go-offline verify
+
+      # =========== OWASP Dependency-Check ===========
+      # Gera HTML/JSON/SARIF com CVEs, versões desatualizadas, severidade e recomendações
+      - name: OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@v4
+        with:
+          project: 'dwe-app-auth-java'
+          path: '.'
+          format: 'ALL'
+          out: 'reports'
+          args: >
+            --failOnCVSS 0
+            --enableRetired
+        # continue-on-error para não quebrar o pipeline; você pode remover se quiser bloquear merges por CVSS
+        continue-on-error: true
+
+      # Publica o SARIF no Code Scanning
+      - name: Upload SARIF (Dependency-Check)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/dependency-check-report.sarif
+
+      # Anexa HTML/JSON do Dependency-Check
+      - name: Upload Dependency-Check artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: |
+            reports/dependency-check-report.html
+            reports/dependency-check-report.json
+            reports/dependency-check-report.sarif
+
+      # =========== SBOM (CycloneDX) ===========
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          mvn -B -q org.cyclonedx:cyclonedx-maven-plugin:2.8.0:makeAggregateBom -DskipTests
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: |
+            target/bom.json
+            target/bom.xml
+
+      # =========== Licenças (Third-Party) ===========
+      # Gera THIRD-PARTY.txt com licenças das dependências
+      - name: Generate licenses report
+        run: |
+          mvn -B -q org.codehaus.mojo:license-maven-plugin:2.4.0:aggregate-add-third-party \
+            -Dlicense.resolveRemoteDependencies=true
+      - name: Upload licenses report
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-licenses
+          path: |
+            target/generated-sources/license/THIRD-PARTY.txt
+
+      # =========== Snyk (opcional) ===========
+      # Requer secret SNYK_TOKEN; habilite removendo as linhas "if: false"
+      - name: Setup Snyk (optional)
+        if: false
+        uses: snyk/actions/setup@master
+      - name: Snyk test to SARIF (optional)
+        if: false
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk test --maven --severity-threshold=low \
+            --sarif-file-output=snyk.sarif || true
+      - name: Upload SARIF (Snyk) (optional)
+        if: false
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk.sarif
