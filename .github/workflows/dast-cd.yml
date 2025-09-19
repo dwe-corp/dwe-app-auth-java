@@ -21,37 +21,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Garante que sempre teremos um TARGET (evita erro quando o secret não está setado)
       - name: Ensure TARGET (fallback)
         run: |
           if [ -z "${TARGET}" ]; then
-            echo "TARGET empty; using fallback https://example.com (to avoid job failure)."
+            echo "TARGET empty; using fallback https://example.com"
             echo "TARGET=https://example.com" >> "$GITHUB_ENV"
           else
             echo "Using TARGET=${TARGET}"
             echo "TARGET=${TARGET}" >> "$GITHUB_ENV"
           fi
 
-      # ZAP Full Scan oficial – não falha o job por achados (fail_action: false)
-      # Gera e publica artefatos automaticamente (HTML/MD)
       - name: ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.8.0
         with:
           target: ${{ env.TARGET }}
           cmd_options: >-
-            -a -d            # agressivo + debug (mantém job estável)
+            -a -d
           allow_issue_writing: false
           fail_action: false
-          artifact_name: zap-report
+          artifact_name: zapreport
 
-      # (Opcional) Sempre baixa os artefatos gerados pela action anterior para uma pasta local
-      # e sobe como artifact único "dast-reports" para facilitar download
       - name: Collect ZAP artifacts
         if: always()
         run: |
           mkdir -p dast-reports
-          # A action salva relatórios em workspace/. O nome exato pode mudar por versão;
-          # copiamos padrões comuns e ignoramos erros.
           cp -f report.html dast-reports/zap-report.html 2>/dev/null || true
           cp -f report.md   dast-reports/zap-report.md   2>/dev/null || true
           cp -f *.html      dast-reports/                2>/dev/null || true
