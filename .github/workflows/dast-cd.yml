@@ -1,7 +1,7 @@
 name: DAST - ZAP (simple)
 
 on:
-  workflow_dispatch:    # roda manualmente
+  workflow_dispatch:
   push:
     branches: [ main, develop ]
   pull_request:
@@ -13,8 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Usa STAGING_URL se existir; senão, usa example.com (não falha)
-      - name: Set TARGET (with safe fallback)
+      - name: Set TARGET (fallback safe)
         run: |
           if [ -z "${{ secrets.STAGING_URL }}" ]; then
             echo "TARGET=https://example.com" >> $GITHUB_ENV
@@ -24,29 +23,11 @@ jobs:
             echo "Using STAGING_URL=${{ secrets.STAGING_URL }}"
           fi
 
-      # Varredura ZAP super simples + não falha o job
       - name: ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.8.0
         with:
           target: ${{ env.TARGET }}
-          fail_action: false            # não quebra o pipeline
-          allow_issue_writing: false    # não cria issues
-          cmd_options: -d               # logs diagnósticos
-          artifact_name: zapreport      # nome simples (evita erro de artifact)
-
-      # Junta os relatórios em uma pasta única (opcional)
-      - name: Collect reports
-        if: always()
-        run: |
-          mkdir -p dast-reports
-          cp -f report.html dast-reports/zap-report.html 2>/dev/null || true
-          cp -f report.md   dast-reports/zap-report.md   2>/dev/null || true
-          cp -f *.html      dast-reports/                2>/dev/null || true
-          cp -f *.md        dast-reports/                2>/dev/null || true
-
-      - name: Upload reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dast-reports
-          path: dast-reports
+          fail_action: false
+          allow_issue_writing: false
+          cmd_options: -d
+          artifact_name: zap
