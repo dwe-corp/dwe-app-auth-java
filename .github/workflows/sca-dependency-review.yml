@@ -1,6 +1,8 @@
 name: SCA - Fast Dependency Review
 
 on:
+  push:
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
 
