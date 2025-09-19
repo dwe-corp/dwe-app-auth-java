@@ -1,4 +1,4 @@
-name: SCA - Third-Party Components (Maven)
+name: SCA - Third-Party Components
 
 on:
   push:
@@ -6,78 +6,28 @@ on:
   pull_request:
     branches: [ main, develop ]
 
-permissions:
-  contents: read
-  security-events: write
-  actions: read
-
 jobs:
-  sca_maven:
+  sca:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
-
-      - name: Build (resolve deps)
-        run: mvn -B -q -DskipTests dependency:go-offline verify
-
-      # ================= OWASP Dependency-Check =================
-      - name: OWASP Dependency-Check
-        uses: dependency-check/Dependency-Check_Action@v4
-        with:
-          project: 'dwe-app-auth-java'
-          path: '.'
-          format: 'ALL'        # gera HTML, JSON e SARIF
-          out: 'reports'
-          args: >
-            --scan .
-            --enableRetired
+      - name: Run OWASP Dependency-Check (Docker)
+        run: |
+          mkdir -p reports
+          docker run --rm \
+            -v "$(pwd)":/src \
+            -v "$(pwd)/reports":/report \
+            owasp/dependency-check:latest \
+            --scan /src \
+            --format "ALL" \
+            --out /report \
             --failOnCVSS 0
-        continue-on-error: true   # não falha o job; ajuste seu policy depois
 
-      - name: Upload SARIF (Dependency-Check)
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: reports/dependency-check-report.sarif
-
-      - name: Upload Dependency-Check artifacts
+      - name: Upload Dependency-Check reports
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
-          path: |
-            reports/dependency-check-report.html
-            reports/dependency-check-report.json
-            reports/dependency-check-report.sarif
-
-      # ================= SBOM (CycloneDX) =================
-      - name: Generate SBOM (CycloneDX)
-        run: mvn -B -q org.cyclonedx:cyclonedx-maven-plugin:2.8.0:makeAggregateBom -DskipTests
-
-      - name: Upload SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-cyclonedx
-          path: |
-            target/bom.json
-            target/bom.xml
-
-      # ================= Licenças =================
-      - name: Generate licenses report
-        run: >
-          mvn -B -q
-          org.codehaus.mojo:license-maven-plugin:2.4.0:aggregate-add-third-party
-          -Dlicense.resolveRemoteDependencies=true
-
-      - name: Upload licenses
-        uses: actions/upload-artifact@v4
-        with:
-          name: third-party-licenses
-          path: target/generated-sources/license/THIRD-PARTY.txt
+          path: reports
