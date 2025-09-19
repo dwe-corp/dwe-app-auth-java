@@ -1,4 +1,4 @@
-name: DAST - Local App + OWASP ZAP
+name: DAST - Local Java App + ZAP
 
 on:
   push:
@@ -12,10 +12,9 @@ permissions:
   actions: read
 
 env:
-  APP_IMAGE: local-app:latest
-  APP_PORT: "8080"           # mude se sua app expõe outra porta
-  APP_HEALTH_PATH: "/health" # mude se seu endpoint de saúde for diferente (use "/" se não tiver)
-  WAIT_SECONDS: "180"        # tempo máximo (em segundos) para esperar a app ficar de pé
+  APP_PORT: "8080"         # mude se sua app usar outra porta
+  HEALTH_PATH: "/"         # mude para /actuator/health se você tiver Actuator
+  SOFT_WAIT_SECS: "180"    # tempo máx. para aguardar a app (não falha se não subir)
 
 jobs:
   dast:
@@ -26,41 +25,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Build da sua aplicação em Docker (precisa de um Dockerfile no repositório)
-      - name: Build app image
-        run: |
-          docker build -t "${APP_IMAGE}" .
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17' # ajuste se for 21/11/etc.
 
-      # 2) Sobe a aplicação localmente, expondo na porta 8080 do host
-      - name: Run app container
-        run: |
-          docker run -d --name local-app -p ${APP_PORT}:${APP_PORT} "${APP_IMAGE}"
-          docker ps
+      - name: Build (skip tests)
+        run: ./mvnw -q -DskipTests package
 
-      # 3) Espera (de forma resiliente) a app responder; não falha o job se não responder
-      - name: Wait for local app (soft check)
+      # Sobe a app localmente em background na porta 8080.
+      # Tenta primeiro com o JAR (Spring Boot fat-jar). Se não houver JAR, cai para spring-boot:run.
+      - name: Start app (background)
         run: |
-          URL="http://localhost:${APP_PORT}${APP_HEALTH_PATH}"
-          echo "Waiting for ${URL} up to ${WAIT_SECONDS}s..."
-          end=$((SECONDS + WAIT_SECONDS))
+          set -e
+          mkdir -p runlogs
+          if ls target/*.jar >/dev/null 2>&1; then
+            echo "Starting via JAR..."
+            nohup java -Dserver.port=${APP_PORT} -jar target/*.jar > runlogs/app.log 2>&1 &
+          else
+            echo "No JAR found; starting via spring-boot:run..."
+            nohup ./mvnw -Dspring-boot.run.jvmArguments="-Dserver.port=${APP_PORT}" -DskipTests spring-boot:run > runlogs/app.log 2>&1 &
+          fi
+          echo $! > runlogs/app.pid
+          sleep 5
+          echo "App PID: $(cat runlogs/app.pid)"
+
+      # Espera de forma "soft": não falha o job se a app não ficar OK a tempo
+      - name: Soft wait for app
+        run: |
+          URL="http://localhost:${APP_PORT}${HEALTH_PATH}"
+          echo "Waiting (soft) for ${URL} up to ${SOFT_WAIT_SECS}s..."
+          end=$((SECONDS + SOFT_WAIT_SECS))
           ok=0
           while [ $SECONDS -lt $end ]; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$URL" || echo "000")
             echo "HTTP $code"
-            if [ "$code" = "200" ] || [ "$code" = "204" ] || [ "$code" = "302" ] || [ "$code" = "301" ]; then
-              ok=1
-              break
+            if [ "$code" = "200" ] || [ "$code" = "204" ] || [ "$code" = "301" ] || [ "$code" = "302" ]; then
+              ok=1; break
             fi
             sleep 3
           done
           if [ $ok -eq 1 ]; then
             echo "App is up."
           else
-            echo "App did not become healthy in time. Proceeding anyway."  # não quebra o job
+            echo "App may not be fully ready. Proceeding anyway (soft wait)."
           fi
 
-      # 4) ZAP Full Scan (action oficial). Não falha o job por findings.
-      #    Alvo: http://localhost:8080 (ou a porta que você configurou)
+      # ZAP oficial – não falha o job por achados; salva artefatos
       - name: ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.8.0
         with:
@@ -69,9 +81,9 @@ jobs:
             -a -d
           allow_issue_writing: false
           fail_action: false
-          artifact_name: zapreport   # evitar nomes com hífen
+          artifact_name: zapreport   # evitar hífen no nome do artifact
 
-      # 5) Consolida relatórios (HTML/MD) em uma pasta e envia como artifact único
+      # Consolida relatórios
       - name: Collect ZAP artifacts
         if: always()
         run: |
@@ -89,9 +101,12 @@ jobs:
           name: dast-reports
           path: dast-reports
 
-      # 6) Cleanup
-      - name: Stop and remove app container
+      # Encerra a app e mostra logs (sempre)
+      - name: Teardown app
         if: always()
         run: |
-          docker logs local-app || true
-          docker rm -f local-app || true
+          echo "=== tail app.log ==="
+          tail -n 400 runlogs/app.log || true
+          if [ -f runlogs/app.pid ]; then
+            kill $(cat runlogs/app.pid) 2>/dev/null || true
+          fi
