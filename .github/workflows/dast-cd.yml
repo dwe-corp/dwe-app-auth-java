@@ -15,11 +15,9 @@ on:
 jobs:
   zap:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      # Usa, nesta ordem: secret -> variables -> input do workflow -> fallback
       - name: Resolve TARGET
         run: |
           if [ -n "${{ secrets.STAGING_URL }}" ]; then
@@ -41,14 +39,16 @@ jobs:
       - name: ZAP Baseline (fail on HIGH) + HTML/JSON
         run: |
           mkdir -p zap-out
+          chmod 777 zap-out
           docker pull ghcr.io/zaproxy/zaproxy:stable
-          docker run --rm -v "$PWD":/zap/wrk ghcr.io/zaproxy/zaproxy:stable \
+          docker run --rm -u 0:0 \
+            -v "$PWD/zap-out":/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
               -t "${TARGET}" \
               -r zap-report.html \
               -J zap-report.json \
-              -m 2
-          mv -f zap-report.* zap-out/
+              -m 2   # 0=LOW,1=MEDIUM,2=HIGH
 
       - name: Upload ZAP reports
         if: always()
