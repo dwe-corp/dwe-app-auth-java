@@ -1,4 +1,4 @@
-name: DAST - ZAP (minimal, no-action)
+name: DAST - ZAP Baseline
 
 on:
   workflow_dispatch:
@@ -14,32 +14,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set TARGET (with fallback)
+      - name: Configure target (needs STAGING_URL secret)
         run: |
           if [ -z "${{ secrets.STAGING_URL }}" ]; then
-            echo "TARGET=https://example.com" >> $GITHUB_ENV
-            echo "No STAGING_URL set; using https://example.com"
-          else
-            echo "TARGET=${{ secrets.STAGING_URL }}" >> $GITHUB_ENV
-            echo "Using STAGING_URL=${{ secrets.STAGING_URL }}"
+            echo "STAGING_URL secret não configurado"; exit 1
           fi
+          echo "TARGET=${{ secrets.STAGING_URL }}" >> $GITHUB_ENV
 
-      - name: Run ZAP Full Scan (Docker)
+      - name: ZAP Baseline (fail on HIGH) + HTML/JSON
         run: |
           mkdir -p zap-out
           docker pull ghcr.io/zaproxy/zaproxy:stable
-          # monta a pasta atual em /zap/wrk para salvar o relatório aqui
           docker run --rm -v "$PWD":/zap/wrk ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
+            zap-baseline.py \
               -t "${TARGET}" \
               -r zap-report.html \
-              -d -I || true
-          # deixa tudo em zap-out/
-          mv -f zap-report.html zap-out/ 2>/dev/null || true
-          ls -lah zap-out || true
+              -J zap-report.json \
+              -m 2    # 0=LOW,1=MEDIUM,2=HIGH -> falha se houver HIGH
+          mv -f zap-report.* zap-out/
 
-      - name: Upload reports
+      - name: Upload ZAP reports
         uses: actions/upload-artifact@v4
         with:
-          name: reports
+          name: zap-report
           path: zap-out
