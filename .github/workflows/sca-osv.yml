@@ -16,20 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OSV-Scanner
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh \
-            | sh -s -- -b /usr/local/bin
-          osv-scanner --version
+      - name: Pull OSV-Scanner image
+        run: docker pull ghcr.io/google/osv-scanner:latest
 
-      - name: Run OSV-Scanner (generate SARIF robust)
+      - name: Run OSV-Scanner (Docker) -> SARIF
         shell: bash
         run: |
-          set +e
-          osv-scanner -r . --format sarif --output osv.sarif
-          RC=$?
-          set -e
-          if [ $RC -ne 0 ] || [ ! -s osv.sarif ]; then
+          # Executa o scan e grava SARIF no workspace
+          docker run --rm -v "$PWD":/repo -w /repo ghcr.io/google/osv-scanner:latest \
+            -r . --format sarif --output /repo/osv.sarif || true
+
+          # Garante arquivo válido (evita "Invalid SARIF / Unexpected end...")
+          if [ ! -s osv.sarif ]; then
             echo "OSV não gerou saída válida; criando SARIF mínimo."
             printf '%s\n' \
               '{' \
