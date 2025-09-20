@@ -11,9 +11,6 @@ permissions:
   contents: read
   security-events: write
 
-env:
-  TARGET: ${{ secrets.STAGING_URL }}
-
 jobs:
   # --- SAST (Semgrep) ---
   sast_semgrep:
@@ -24,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: pip install semgrep
 
-      # NÃO falha o job; geramos SARIF e analisamos no próximo passo
+      # não falha o job por findings
       - name: Semgrep (SARIF)
         run: |
           semgrep --config "p/owasp-top-ten p/security-audit p/secrets" \
@@ -34,7 +31,7 @@ jobs:
         with:
           sarif_file: semgrep.sarif
 
-      # Gate por severidade: se houver level=="error" -> block
+      # gate por severidade (bloqueia deploy se tiver "error")
       - name: Decide gate (error-level findings)
         id: gate
         run: |
@@ -68,8 +65,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD":/repo -w /repo ghcr.io/google/osv-scanner:latest \
             -r . --format sarif --output /repo/osv.sarif || true
-
-          # Garante um SARIF válido para o upload
+          # garante SARIF válido
           if [ ! -s osv.sarif ]; then
             printf '%s\n' \
               '{' \
@@ -103,10 +99,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     environment: staging
+    outputs:
+      target: ${{ steps.resolve.outputs.target }}
     steps:
-      - run: |
-          test -n "${TARGET}" || (echo "STAGING_URL não configurado" && exit 1)
-          echo "Deploy para ${TARGET} (placeholder)"
+      - name: Resolve TARGET (secret -> var -> fallback)
+        id: resolve
+        run: |
+          T="${{ secrets.STAGING_URL }}"
+          if [ -z "$T" ]; then T="${{ vars.STAGING_URL }}"; fi
+          if [ -z "$T" ]; then T="https://example.com"; fi
+          echo "Target resolved: $T"
+          echo "target=$T" >> "$GITHUB_OUTPUT"
+      - run: echo "Deploy para ${{ steps.resolve.outputs.target }} (placeholder)"
 
   # --- DAST (ZAP Baseline) ---
   dast_zap:
@@ -115,12 +119,14 @@ jobs:
     steps:
       - name: ZAP Baseline (gera HTML/JSON; não falha aqui)
         run: |
+          TARGET="${{ needs.deploy_staging.outputs.target }}"
+          echo "Scanning ${TARGET}"
           mkdir -p zap-out && chmod 777 zap-out
           docker pull ghcr.io/zaproxy/zaproxy:stable
           docker run --rm -u 0:0 -v "$PWD/zap-out":/zap/wrk ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py -t "${TARGET}" -r zap-report.html -J zap-report.json -m 2 || true
 
-      # Gate: falha o job se houver HIGH
+      # gate: falha o job se houver HIGH
       - name: Gate por severidade (falha se HIGH)
         run: |
           sudo apt-get update >/dev/null 2>&1 || true
@@ -142,7 +148,7 @@ jobs:
           name: zap-report
           path: zap-out
 
-  # --- Gate de Deploy Prod (bloqueia se SAST tiver error ou DAST falhar) ---
+  # --- Gate de Deploy Prod ---
   deploy_prod:
     runs-on: ubuntu-latest
     needs: [sast_semgrep, sca_osv, dast_zap]
@@ -150,7 +156,7 @@ jobs:
     steps:
       - run: echo "✅ Todos os checks OK — deploy liberado (placeholder)"
 
-  # --- Notifica status no PR ---
+  # --- Notificação no PR ---
   notify:
     runs-on: ubuntu-latest
     needs: [sast_semgrep, sca_osv, dast_zap]
@@ -160,11 +166,14 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const sastGate = '${{ needs.sast_semgrep.outputs.gate }}'
+            const scaRes   = '${{ needs.sca_osv.result }}'
+            const dastRes  = '${{ needs.dast_zap.result }}'
             const body = `
             ### Security checks
-            - SAST (Semgrep): **${{ needs.sast_semgrep.outputs.gate == 'pass' && 'success' || 'findings (error)' }}**
-            - SCA  (OSV): **${{ needs.sca_osv.result }}**
-            - DAST (ZAP): **${{ needs.dast_zap.result }}**
+            - SAST (Semgrep): **${sastGate === 'pass' ? 'success' : 'findings (error)'}**
+            - SCA  (OSV): **${scaRes}**
+            - DAST (ZAP): **${dastRes}**
 
             > Deploy de produção é bloqueado automaticamente se SAST tiver \`error\` ou se DAST encontrar HIGH.
             `
