@@ -192,6 +192,12 @@ Para DAST, configure STAGING_URL como Secret ou Repository variable (ou informe 
 
 ⸻
 
-🧠 Autor
+🧠 Autores
+
+- Deivison Pertel – **RM 550803**
+- Eduardo Akira Murata – **RM 98713**
+- Wesley Souza de Oliveira – **RM 97874**
+
+⸻
 
 Desenvolvido para fins acadêmicos e prática de segurança em pipelines CI/CD e APIs RESTful.
