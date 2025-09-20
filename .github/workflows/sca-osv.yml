@@ -20,17 +20,38 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh \
             | sh -s -- -b /usr/local/bin
+          osv-scanner --version
 
       - name: Run OSV-Scanner (generate SARIF)
         run: |
-          osv-scanner -r . --format sarif > osv.sarif || true
+          # Gera SARIF; se o comando falhar e não escrever nada, criamos um SARIF vazio válido
+          set +e
+          osv-scanner -r . --format sarif --output osv.sarif
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ] || [ ! -s osv.sarif ]; then
+            echo "OSV não gerou saída válida; criando SARIF vazio para evitar erro no upload."
+            cat > osv.sarif <<'EOF'
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": { "driver": { "name": "OSV-Scanner", "informationUri": "https://osv.dev", "rules": [] } },
+      "results": []
+    }
+  ]
+}
+EOF
+          fi
 
       - name: Upload SARIF to Code Scanning
+        if: hashFiles('osv.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: osv.sarif
 
       - name: Upload SARIF artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: osv-report
