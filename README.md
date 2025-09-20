@@ -2,6 +2,16 @@ DWE-APP-AUTH-JAVA
 
 API de autenticação desenvolvida com Java 17, Spring Boot 3, Spring Security, JWT, Swagger, logs com SLF4J, H2 e pipeline de segurança CI/CD com SAST (Semgrep), DAST (OWASP ZAP) e SCA (Dependency Review + OSV-Scanner).
 
+---
+
+🤝 *Autores*
+
+- Eduardo Akira Murata (RM98713)
+- Deivison Pertel (RM550803)
+- Wesley Souza de Oliveira (RM97874)
+
+---
+
 ⸻
 
 📌 Funcionalidades Implementadas
@@ -189,14 +199,6 @@ Para DAST, configure STAGING_URL como Secret ou Repository variable (ou informe 
 	•	DAST: zap-report.html/zap-report.json com payloads/evidências
 	•	SCA: comentário do Dependency Review (PR) + SARIF do OSV em Code scanning
 	•	Integração: pipeline unificado com gatilhos, bloqueio de deploy e notificação no PR
-
-⸻
-
-🧠 Autores
-
-- Deivison Pertel – **RM 550803**
-- Eduardo Akira Murata – **RM 98713**
-- Wesley Souza de Oliveira – **RM 97874**
 
 ⸻
 
