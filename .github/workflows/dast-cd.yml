@@ -2,6 +2,11 @@ name: DAST - ZAP Baseline
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "URL a escanear (ex.: https://staging.seuapp.com)"
+        required: false
+        default: "https://example.com"
   push:
     branches: [ main, develop ]
   pull_request:
@@ -14,12 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure target (needs STAGING_URL secret)
+      # Usa, nesta ordem: secret -> variables -> input do workflow -> fallback
+      - name: Resolve TARGET
         run: |
-          if [ -z "${{ secrets.STAGING_URL }}" ]; then
-            echo "STAGING_URL secret não configurado"; exit 1
+          if [ -n "${{ secrets.STAGING_URL }}" ]; then
+            T="${{ secrets.STAGING_URL }}"
+            SRC="secret"
+          elif [ -n "${{ vars.STAGING_URL }}" ]; then
+            T="${{ vars.STAGING_URL }}"
+            SRC="repo variable"
+          elif [ -n "${{ github.event.inputs.target }}" ]; then
+            T="${{ github.event.inputs.target }}"
+            SRC="manual input"
+          else
+            T="https://example.com"
+            SRC="fallback"
           fi
-          echo "TARGET=${{ secrets.STAGING_URL }}" >> $GITHUB_ENV
+          echo "TARGET=$T" >> $GITHUB_ENV
+          echo "Scanning target ($SRC): $T"
 
       - name: ZAP Baseline (fail on HIGH) + HTML/JSON
         run: |
@@ -30,10 +47,11 @@ jobs:
               -t "${TARGET}" \
               -r zap-report.html \
               -J zap-report.json \
-              -m 2    # 0=LOW,1=MEDIUM,2=HIGH -> falha se houver HIGH
+              -m 2
           mv -f zap-report.* zap-out/
 
       - name: Upload ZAP reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
